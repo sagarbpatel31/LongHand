@@ -155,7 +155,6 @@ Repeated terms to carry: **transformer**, **attention**.
   1. Replay building + verbatim toggle + stat chips + seam inspector (~30 s).
   2. `python -m longhand.bench` output — the A/B/C chart (~15 s).
   3. Live mic: speak → document builds → stop (~30 s).
-- Drop a screenshot or GIF into the README (there's a License/results slot ready).
 
 ---
 
