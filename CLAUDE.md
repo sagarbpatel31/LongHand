@@ -106,9 +106,9 @@ python -m longhand        # run the app
 
 ## Current status
 
-Hours 0–12 done (STT + scheduler + assembler + segmenter + benchmark + assembly
-intelligence + forced-cut splice + UI). **135 offline tests pass, 0 network**; 1
-live smoke deselected.
+Hours 0–14 done (STT + scheduler + assembler + segmenter + benchmark + assembly
+intelligence + forced-cut splice + UI + docs). **135 offline tests pass, 0
+network**; 1 live smoke deselected. Only the demo *recording* remains (manual).
 
 Hour 0–1 — STT layer:
 - Skeleton: `pyproject.toml` (hatchling), `longhand/` package, `.env` via
@@ -206,10 +206,17 @@ Hours 10–12 — UI (done, offline replay):
   dedup, determinism); `tests/test_ui_app.py` (3 — page served, TestClient
   WebSocket full protocol, exactly-one-forced-cut).
 
+Hours 12–14 — docs (done):
+- `README.md`: problem, the two ideas, the real A/B/C benchmark chart (WER,
+  terminology consistency, paragraph F1), ASCII architecture diagram + module
+  table, run commands, how-it-works, hard API facts, testing philosophy.
+- `.env.example`: the key var placeholder (gitignore already expected it).
+- `pyproject.toml`: `readme=` + `[project.scripts] longhand=…:main` console entry.
+
 Deferred / not yet run:
 - The real spike call — `test_live_smoke.py` ready; run `pytest -m live` manually.
 - Live mic + real Silero validation (speak → segments emit → transcript). Manual.
-- Next up (§10): 12–14 README + charts + architecture diagram + demo recording.
+- Demo *recording* (§10, 12–14): screen-capture the UI + bench. Manual.
 
 Deps: runtime `httpx`, `python-dotenv`, `numpy`, `onnxruntime`,
 `silero-vad-notorch`, `sounddevice` (last three lazy/live-only), `fastapi`,
