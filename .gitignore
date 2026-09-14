@@ -1,0 +1,30 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Project
+*.wav
+!bench/fixtures/*.wav
+recordings/
+out/
+*.onnx
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

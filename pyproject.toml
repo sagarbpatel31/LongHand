@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "longhand"
+version = "0.0.1"
+description = "Long-form dictation over AssemblyAI's 120s Dictation API."
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "numpy>=1.26",             # frame math (int16<->float32), slicing — import-time
+    "onnxruntime>=1.17",       # Silero inference — lazy in SileroVad, live-only
+    "silero-vad-notorch>=6.2.1.1",  # VAD model+API, onnxruntime-only, no torch — live-only
+    "sounddevice>=0.4",        # mic capture — lazy in MicCapture.start(), live-only
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "hypothesis>=6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["longhand"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "-m 'not live'"
+markers = [
+    "live: exercises the real AssemblyAI Dictation API (excluded by default; run with -m live)",
+]
+testpaths = ["tests"]
+log_cli_level = "INFO"
