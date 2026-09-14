@@ -106,8 +106,8 @@ python -m longhand        # run the app
 
 ## Current status
 
-Hours 0–7 done (STT + scheduler + assembler + segmenter + benchmark). **83
-offline tests pass, 0 network**; 1 live smoke deselected. Working through §10.
+Hours 0–9 done (STT + scheduler + assembler + segmenter + benchmark + assembly
+intelligence). **117 offline tests pass, 0 network**; 1 live smoke deselected.
 
 Hour 0–1 — STT layer:
 - Skeleton: `pyproject.toml` (hatchling), `longhand/` package, `.env` via
@@ -156,11 +156,32 @@ Hours 5–7 — benchmark (Part done):
   A (naive 110s chop) vs B (VAD) through the real scheduler → table.
   `python -m longhand.bench`. On 10-min demo: A loses 4 boundary words, B loses 0.
 
+Hours 7–9 — assembly intelligence (done):
+- `assemble/structure.py`: `build_document` turns `lead_pause` into
+  sentence/paragraph/section blocks (bands 1.2/3.0); gaps render a visible marker.
+  Idea #2 ("silence IS structure").
+- `assemble/glossary.py`: `Glossary` (observe/keyterms/stt_prompt, no-dep term
+  extraction), `consistency_pass` (phonetic key + `wer.edit_distance` clustering,
+  strict-majority normalization). No new deps.
+- `stt/scheduler.py`: added `prepare_config` + `on_result` hooks (keyword-only,
+  backward-compatible) so a glossary can enrich per-segment config and learn from
+  results. `transcribe_segments` gained `max_in_flight`/`prepare_config`/`on_result`.
+- Bench condition C: `DriftTerm`/`DriftFixture`/`build_drift_fixture`,
+  `DriftDictationClient` (tagged terms drift unless pinned), `bench/metrics.py`
+  (terminology consistency, paragraph-boundary F1), `compare_drift` → [A,B,C].
+  C runs serial (`max_in_flight=1`) + consistency pass for determinism.
+
+`python -m longhand.bench` (10-min demo) shows three charts:
+- WER: A 2.7% > B 2.3% > C 0.0%
+- terminology consistency: A/B 69% → C 100%
+- paragraph-boundary F1: A 0.00 → B/C 1.00
+
 Deferred / not yet run:
 - The real spike call — `test_live_smoke.py` ready; run `pytest -m live` manually.
 - Live mic + real Silero validation (speak → segments emit → transcript). Manual.
-- Next up (§10 hours 7–9): glossary carryover, stt_prompt chaining, consistency
-  pass = condition C. Then paragraph-boundary F1 + terminology metrics.
+- Next up (§10): 9–10 forced-cut overlap splice (`assemble/splice.py`) + property
+  tests; then 10–12 UI (live doc, seam inspector, verbatim toggle); 12–14 README +
+  charts + demo.
 
 Deps: runtime `httpx`, `python-dotenv`, `numpy`, `onnxruntime`,
 `silero-vad-notorch`, `sounddevice` (last three lazy/live-only). Dev `pytest`,

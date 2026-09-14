@@ -20,7 +20,12 @@ from typing import Awaitable, Callable, Iterable
 
 from ..assemble.order import AssembledSegment, OrderedAssembler
 from ..segment.types import SegmentClosed
-from .client import DictationClient, DictationError, TranscriptionConfig
+from .client import (
+    DictationClient,
+    DictationError,
+    TranscriptionConfig,
+    TranscriptionResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +49,17 @@ class SegmentScheduler:
         on_backpressure: Callable[[int], None] | None = None,
         backpressure_high: int = BACKPRESSURE_QUEUE_HIGH,
         close_client: bool = True,
+        prepare_config: Callable[[SegmentClosed], TranscriptionConfig] | None = None,
+        on_result: Callable[[int, TranscriptionResult], None] | None = None,
     ) -> None:
         self._client = client
         self._base_config = base_config
         self._assembler = assembler or OrderedAssembler()
+        # Carryover hooks (§5). Defaults reproduce the plain per-seq config path.
+        self._prepare_config = prepare_config or (
+            lambda seg: replace(self._base_config, seq=seg.seq)
+        )
+        self._on_result = on_result
         self._sem = asyncio.Semaphore(max_in_flight)
         self._max_retries = max_retries
         self._base_backoff_s = base_backoff_s
@@ -124,7 +136,11 @@ class SegmentScheduler:
                 self._in_flight -= 1
 
     async def _attempt(self, seg: SegmentClosed) -> None:
-        cfg = replace(self._base_config, seq=seg.seq)
+        # prepare_config runs now (at cap-slot acquisition), so a carryover hook
+        # sees the most-recent-available transcripts (§5.2 graceful degradation).
+        cfg = self._prepare_config(seg)
+        if cfg.seq != seg.seq:
+            cfg = replace(cfg, seq=seg.seq)  # seq is load-bearing; never drop it
         attempt = 0
         while True:
             try:
@@ -132,6 +148,8 @@ class SegmentScheduler:
                 self._assembler.add_result(
                     seg.seq, result, lead_pause=seg.lead_pause, forced=seg.forced
                 )
+                if self._on_result is not None:
+                    self._on_result(seg.seq, result)
                 logger.debug("seq=%s scheduler.ok attempt=%d", seg.seq, attempt)
                 return
             except DictationError as e:
@@ -170,6 +188,9 @@ async def transcribe_segments(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     on_backpressure: Callable[[int], None] | None = None,
     close_client: bool = True,
+    max_in_flight: int = MAX_IN_FLIGHT,
+    prepare_config: Callable[[SegmentClosed], TranscriptionConfig] | None = None,
+    on_result: Callable[[int, TranscriptionResult], None] | None = None,
 ) -> list[AssembledSegment]:
     """One-shot: feed all segments, drain, return the ordered document.
 
@@ -183,6 +204,9 @@ async def transcribe_segments(
         sleep=sleep,
         on_backpressure=on_backpressure,
         close_client=close_client,
+        max_in_flight=max_in_flight,
+        prepare_config=prepare_config,
+        on_result=on_result,
     )
     for seg in segments:
         await sched.submit(seg)

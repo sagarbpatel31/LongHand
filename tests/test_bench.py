@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from longhand.bench.fixture_client import FixtureDictationClient, words_lost
-from longhand.bench.fixtures import build_fixture, demo_fixture
-from longhand.bench.harness import compare, format_table
+from longhand.bench.fixture_client import (
+    DriftDictationClient,
+    FixtureDictationClient,
+    words_lost,
+)
+from longhand.bench.fixtures import DriftTerm, build_drift_fixture, build_fixture, demo_fixture
+from longhand.bench.harness import compare, compare_drift, format_table
+from longhand.bench.metrics import paragraph_boundary_f1, terminology_consistency_rate
 from longhand.bench.wer import edit_distance, wer
 from longhand.segment.vad import FRAME_DURATION_S
 from longhand.stt.client import TranscriptionConfig
@@ -101,3 +106,97 @@ async def test_format_table_has_headline():
     table = format_table(results, fx)
     assert "Headline" in table
     assert "WER" in table
+
+
+# --- drift model + condition C ----------------------------------------------
+
+_TERM = [DriftTerm("kubernetes", "koobernetes")]
+
+
+def _one_clip_drift():
+    # kubernetes at word-indices 0,2,4 -> ranks 0,1,2 (rank 2 drifts when unpinned)
+    return build_drift_fixture(
+        ["kubernetes is kubernetes and kubernetes again here now"],
+        gaps=1.0,
+        drift_terms=_TERM,
+    )
+
+
+def _cfg(seq=0, **kw):
+    return TranscriptionConfig(sample_rate=16000, channels=1, audio_format="pcm", seq=seq, **kw)
+
+
+async def test_drift_client_drifts_without_carryover():
+    d = _one_clip_drift()
+    client = DriftDictationClient(d, {0: (0.0, d.fixture.total_s)})
+    res = await client.transcribe(b"", _cfg())
+    assert "koobernetes" in res.text  # rank-2 occurrence drifted
+    assert res.text.split().count("kubernetes") == 2
+
+
+async def test_drift_client_pins_with_keyterms():
+    d = _one_clip_drift()
+    client = DriftDictationClient(d, {0: (0.0, d.fixture.total_s)})
+    res = await client.transcribe(b"", _cfg(keyterms_prompt=["kubernetes"]))
+    assert "koobernetes" not in res.text
+    assert res.text.split().count("kubernetes") == 3
+
+
+async def test_drift_client_pins_with_stt_prompt():
+    d = _one_clip_drift()
+    client = DriftDictationClient(d, {0: (0.0, d.fixture.total_s)})
+    res = await client.transcribe(b"", _cfg(stt_prompt="context: kubernetes matters"))
+    assert "koobernetes" not in res.text
+
+
+def test_terminology_consistency_rate_bounds():
+    d = _one_clip_drift()
+    assert terminology_consistency_rate("kubernetes kubernetes", d) == 1.0
+    assert terminology_consistency_rate("koobernetes koobernetes", d) == 0.0
+
+
+def test_paragraph_boundary_f1_cases():
+    assert paragraph_boundary_f1([1.0, 2.0], [1.0, 2.0])[2] == 1.0
+    assert paragraph_boundary_f1([5.0], [1.0])[2] == 0.0
+    assert paragraph_boundary_f1([], [1.0])[2] == 0.0
+    assert paragraph_boundary_f1([], [])[2] == 1.0
+
+
+def _four_clip_drift():
+    clip = (
+        "alpha beta gamma delta kubernetes epsilon zeta eta theta "
+        "iota kappa lambda mu nu xi omicron pi rho"
+    )  # 18 words, kubernetes once per clip
+    return build_drift_fixture([clip] * 4, gaps=1.5, drift_terms=_TERM)
+
+
+async def test_compare_drift_three_conditions_and_charts():
+    d = _four_clip_drift()
+    a, b, c = await compare_drift(d, chop_s=5.0)
+
+    # terminology: carryover + consistency pass lifts C to perfect; B drifts
+    assert c.terminology_consistency == 1.0
+    assert b.terminology_consistency < 1.0
+    assert c.terminology_consistency > b.terminology_consistency
+
+    # paragraph structure: A threw timing away -> 0; B/C recover it
+    assert a.paragraph_f1 == 0.0
+    assert b.paragraph_f1 >= 0.9
+    assert c.paragraph_f1 == b.paragraph_f1
+
+    # carryover never hurts WER
+    assert c.wer <= b.wer
+
+
+async def test_compare_drift_is_deterministic():
+    d = _four_clip_drift()
+    assert await compare_drift(d, chop_s=5.0) == await compare_drift(d, chop_s=5.0)
+
+
+async def test_format_table_shows_three_charts():
+    d = _four_clip_drift()
+    results = await compare_drift(d, chop_s=5.0)
+    table = format_table(results, d.fixture)
+    assert "WER" in table
+    assert "Terminology consistency" in table
+    assert "Paragraph-boundary F1" in table

@@ -7,9 +7,11 @@ All offline — FakeDictationClient only, injected sleep for deterministic backo
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 import pytest
 
+from longhand.assemble.glossary import Glossary
 from longhand.assemble.order import OrderedAssembler
 from longhand.segment.types import SegmentClosed
 from longhand.stt.client import (
@@ -208,3 +210,91 @@ async def test_aclose_cancels_in_flight_and_closes_client():
     await sched.aclose()
     assert spy.closed is True
     assert not sched._tasks  # no leaked tasks
+
+
+# --- carryover hooks (§5) ---------------------------------------------------
+
+
+class _RecordingClient(DictationClient):
+    def __init__(self) -> None:
+        self.configs: list[TranscriptionConfig] = []
+
+    async def transcribe(self, audio, config):
+        self.configs.append(config)
+        return make_result(f"seg{config.seq}")
+
+
+async def test_default_prepare_config_unchanged():
+    c = _RecordingClient()
+    await transcribe_segments([_seg(i) for i in range(3)], c, base_config=BASE_CFG)
+    assert sorted(cfg.seq for cfg in c.configs) == [0, 1, 2]
+    assert all(cfg.stt_prompt is None and cfg.keyterms_prompt is None for cfg in c.configs)
+
+
+async def test_prepare_config_invoked_per_segment():
+    c = _RecordingClient()
+
+    def prep(seg: SegmentClosed) -> TranscriptionConfig:
+        return replace(BASE_CFG, seq=seg.seq, stt_prompt=f"ctx{seg.seq}")
+
+    await transcribe_segments([_seg(i) for i in range(3)], c, base_config=BASE_CFG, prepare_config=prep)
+    by_seq = {cfg.seq: cfg for cfg in c.configs}
+    assert by_seq[1].stt_prompt == "ctx1"
+
+
+async def test_prepare_config_seq_is_forced():
+    c = _RecordingClient()
+    doc = await transcribe_segments(
+        [_seg(0), _seg(1)],
+        c,
+        base_config=BASE_CFG,
+        prepare_config=lambda seg: replace(BASE_CFG, seq=999),  # wrong seq
+    )
+    assert [s.seq for s in doc] == [0, 1]  # assembler used seg.seq
+    assert sorted(cfg.seq for cfg in c.configs) == [0, 1]  # scheduler forced it back
+
+
+async def test_on_result_fires_once_per_success_not_gap():
+    seen: list[int] = []
+    fake = FakeDictationClient(
+        default=FakeBehavior(result=make_result("ok")),
+        behaviors={1: FakeBehavior(raises=ServerError("down"))},
+    )
+    await transcribe_segments(
+        [_seg(i) for i in range(3)],
+        fake,
+        base_config=BASE_CFG,
+        sleep=_noop_sleep,
+        on_result=lambda seq, r: seen.append(seq),
+    )
+    assert sorted(seen) == [0, 2]  # seq 1 is a gap -> no on_result
+
+
+class _TermClient(DictationClient):
+    def __init__(self) -> None:
+        self.configs: list[TranscriptionConfig] = []
+
+    async def transcribe(self, audio, config):
+        self.configs.append(config)
+        text = "Kubernetes rocks" if config.seq == 0 else "more text here"
+        return make_result(text)
+
+
+async def test_glossary_carryover_later_segment_sees_earlier_terms():
+    g = Glossary()
+    c = _TermClient()
+
+    def prep(seg: SegmentClosed) -> TranscriptionConfig:
+        return replace(BASE_CFG, seq=seg.seq, keyterms_prompt=g.keyterms() or None)
+
+    await transcribe_segments(
+        [_seg(0), _seg(1)],
+        c,
+        base_config=BASE_CFG,
+        prepare_config=prep,
+        on_result=lambda seq, r: g.observe(r.best_text),
+        max_in_flight=1,  # serial -> deterministic causal carryover
+    )
+    cfg1 = next(cfg for cfg in c.configs if cfg.seq == 1)
+    assert cfg1.keyterms_prompt is not None
+    assert any(t.lower() == "kubernetes" for t in cfg1.keyterms_prompt)

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import asyncio
 
-from .fixtures import demo_fixture
-from .harness import compare, format_table
+from .fixtures import demo_drift_fixture
+from .harness import compare_drift, format_table
 
 
 def main() -> None:
-    fixture = demo_fixture()
-    results = asyncio.run(compare(fixture, chop_s=110.0))
-    print(format_table(results, fixture))
+    drift = demo_drift_fixture()
+    results = asyncio.run(compare_drift(drift, chop_s=110.0))
+    print(format_table(results, drift.fixture))
 
 
 if __name__ == "__main__":
