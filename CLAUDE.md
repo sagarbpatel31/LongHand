@@ -106,8 +106,8 @@ python -m longhand        # run the app
 
 ## Current status
 
-Hours 0–5 done (STT + scheduler + assembler + segmenter). **71 offline tests
-pass, 0 network**; 1 live smoke deselected. Working through `LONGHAND_SPEC.md` §10.
+Hours 0–7 done (STT + scheduler + assembler + segmenter + benchmark). **83
+offline tests pass, 0 network**; 1 live smoke deselected. Working through §10.
 
 Hour 0–1 — STT layer:
 - Skeleton: `pyproject.toml` (hatchling), `longhand/` package, `.env` via
@@ -145,10 +145,22 @@ Decisions locked:
   satisfied via retained-buffer retry. Streaming deferred.
 - Policy content ceiling 108s < client 110s (room for the 2s overlap).
 
+Hours 5–7 — benchmark (Part done):
+- `bench/fixtures.py`: synthetic sessions (TimedWord timeline + int16 audio +
+  frame_script + exact ground truth) from clips and known gaps; `demo_fixture`
+  (~10 min).
+- `bench/fixture_client.py`: `FixtureDictationClient` — idealized ASR that slices
+  ground truth by segment time-range; straddling words become mangled fragments
+  (spec §0). `words_lost` counts boundary losses.
+- `bench/wer.py`: token WER (Levenshtein). `bench/harness.py` + `__main__.py`:
+  A (naive 110s chop) vs B (VAD) through the real scheduler → table.
+  `python -m longhand.bench`. On 10-min demo: A loses 4 boundary words, B loses 0.
+
 Deferred / not yet run:
 - The real spike call — `test_live_smoke.py` ready; run `pytest -m live` manually.
 - Live mic + real Silero validation (speak → segments emit → transcript). Manual.
-- Next up (§10 hours 5–7): benchmark harness + synthetic fixtures, A-vs-B WER.
+- Next up (§10 hours 7–9): glossary carryover, stt_prompt chaining, consistency
+  pass = condition C. Then paragraph-boundary F1 + terminology metrics.
 
 Deps: runtime `httpx`, `python-dotenv`, `numpy`, `onnxruntime`,
 `silero-vad-notorch`, `sounddevice` (last three lazy/live-only). Dev `pytest`,
