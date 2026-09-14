@@ -159,6 +159,10 @@ The API client and VAD are validated against the real service
 (`pytest -m live` sends one short WAV and asserts the response shape); the
 mic-to-document round trip is inherently manual — it needs you to speak.
 
+See [`DEMO.md`](DEMO.md) for a step-by-step demo + recording guide, including
+what to say to make each feature (pause→structure, terminology carryover, the
+seam inspector) show up on screen.
+
 ---
 
 ## How it works
