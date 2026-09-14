@@ -138,11 +138,26 @@ paragraphs and sections, a verbatim/clean toggle reveals the terminology
 normalization, and the seam inspector shows the one forced cut being spliced.
 No key, no mic, no network required.
 
-For a real transcription, put your key in `.env` (never commit it):
+### Live dictation from your mic
 
-```
-ASSEMBLYAI_API_KEY=your_raw_key_here
-```
+Open the UI and click **🎤 live**. Real audio flows through the genuine
+concurrent pipeline — Silero VAD segments on your pauses, segments transcribe in
+parallel against the real API, and the document assembles in front of you.
+Click **■ stop** when you're done. This path needs three things and degrades to a
+single visible error message if any is missing:
+
+- `ASSEMBLYAI_API_KEY` in `.env` (never commit it):
+
+  ```
+  ASSEMBLYAI_API_KEY=your_raw_key_here
+  ```
+
+- a working microphone (PortAudio / `sounddevice`);
+- the Silero VAD model (`onnxruntime`, fetched on first use).
+
+The API client and VAD are validated against the real service
+(`pytest -m live` sends one short WAV and asserts the response shape); the
+mic-to-document round trip is inherently manual — it needs you to speak.
 
 ---
 
@@ -200,4 +215,10 @@ a network.
 - The splicer and keyterm packer carry property tests — their invariants are easy
   to state and easy to break.
 
-**135 offline tests, 0 network.** See `LONGHAND_SPEC.md` for the full design.
+**140 offline tests, 0 network.** See `LONGHAND_SPEC.md` for the full design.
+
+---
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).

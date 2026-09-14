@@ -235,10 +235,18 @@ Live mic→UI path (done, engine offline-tested):
   FakeVad + FakeDictationClient over synthetic frames; `tests/test_ui_app.py`
   gains a no-key `/ws/live` gate test (stays offline).
 
-Deferred / not yet run:
-- The real spike call — `test_live_smoke.py` ready; run `pytest -m live` manually.
-- Live mic + real Silero validation (speak → segments emit → transcript). Manual.
-- Demo *recording* (§10, 12–14): screen-capture the UI + bench. Manual.
+Live-validated (Sep 14, real API, key from .env — authorized one-off):
+- `pytest -m live` PASSES — real Dictation API reachable, key valid, response
+  shape correct. A manual 2s-WAV call returned a real `session_id`,
+  `audio_duration_ms=2000`, `request_time≈109ms`, `llm_error=None`; a pure tone
+  yields empty `text` (expected — no words).
+- `SileroVad` loads (onnxruntime + model) and runs inference on the 512-sample
+  contract. A pure tone reads ~0.01 prob (correct: it detects speech, not tones).
+
+Deferred / still manual:
+- Real mic + speech end-to-end (`python -m longhand` → 🎤 live → speak → watch the
+  doc build). Needs a mic + a human; cannot be automated headless.
+- Demo *recording* (§10, 12–14): screen-capture the UI + bench.
 
 Deps: runtime `httpx`, `python-dotenv`, `numpy`, `onnxruntime`,
 `silero-vad-notorch`, `sounddevice` (last three lazy/live-only), `fastapi`,
