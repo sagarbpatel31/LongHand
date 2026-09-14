@@ -106,9 +106,9 @@ python -m longhand        # run the app
 
 ## Current status
 
-Hours 0–10 done (STT + scheduler + assembler + segmenter + benchmark + assembly
-intelligence + forced-cut splice). **122 offline tests pass, 0 network**; 1 live
-smoke deselected.
+Hours 0–12 done (STT + scheduler + assembler + segmenter + benchmark + assembly
+intelligence + forced-cut splice + UI). **135 offline tests pass, 0 network**; 1
+live smoke deselected.
 
 Hour 0–1 — STT layer:
 - Skeleton: `pyproject.toml` (hatchling), `longhand/` package, `.env` via
@@ -185,13 +185,32 @@ Hour 9–10 — forced-cut splice (done):
 - Property test: any split point + overlap reconstructs the original (§9.3).
   Integration: real 130s forced cut → overlapping transcripts → splice → exact.
 
+Hours 10–12 — UI (done, offline replay):
+- `ui/session.py`: `ReplaySession` drives the *whole* condition-C pipeline over a
+  synthetic drift fixture — VAD segmentation → drift ASR client → glossary
+  carryover → ordered assembly → pause→structure → forced-cut splice — and yields
+  JSON messages: `init`, `pending` (drives the shimmer), `document` (full snapshot
+  each segment: sections→paragraphs→blocks, each block BOTH verbatim + cleaned
+  text, seam/splice info on forced-cut successors, live stats). Serial for causal
+  carryover; deterministic (no clocks/RNG). `_clean_blocks` runs one global
+  `consistency_pass` then re-splits per block (token count is invariant).
+- `ui/app.py`: `create_app()` FastAPI — `GET /` serves one embedded HTML page,
+  `WS /ws` streams a `ReplaySession`. `build_demo_drift()` = 24 structured clips +
+  one ~46s run-on monologue that trips exactly ONE forced cut (so the seam
+  inspector has content) at `DEMO_MAX_SEGMENT_S=30`. Page: live doc, in-flight
+  shimmer, verbatim/clean toggle, seam inspector, pause→structure, live stat chips.
+- `longhand/__main__.py`: `python -m longhand` → uvicorn (lazy import; offline
+  suite never needs uvicorn). Boot-smoked: serves 200, streams, stops clean.
+- Tests: `tests/test_ui_session.py` (10 — message contract, ordering, monotone
+  growth, pause→structure, verbatim/clean divergence + 100% term consistency, seam
+  dedup, determinism); `tests/test_ui_app.py` (3 — page served, TestClient
+  WebSocket full protocol, exactly-one-forced-cut).
+
 Deferred / not yet run:
 - The real spike call — `test_live_smoke.py` ready; run `pytest -m live` manually.
 - Live mic + real Silero validation (speak → segments emit → transcript). Manual.
-- Next up (§10): 10–12 UI (FastAPI + one HTML page over WebSocket: live doc,
-  in-flight shimmer, seam inspector, verbatim toggle, pause→structure). Spec warns
-  "the chart wins, not the CSS." Then 12–14 README + charts + demo recording.
+- Next up (§10): 12–14 README + charts + architecture diagram + demo recording.
 
 Deps: runtime `httpx`, `python-dotenv`, `numpy`, `onnxruntime`,
-`silero-vad-notorch`, `sounddevice` (last three lazy/live-only). Dev `pytest`,
-`pytest-asyncio`, `hypothesis`.
+`silero-vad-notorch`, `sounddevice` (last three lazy/live-only), `fastapi`,
+`uvicorn[standard]` (UI server). Dev `pytest`, `pytest-asyncio`, `hypothesis`.

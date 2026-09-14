@@ -14,6 +14,8 @@ dependencies = [
     "onnxruntime>=1.17",       # Silero inference — lazy in SileroVad, live-only
     "silero-vad-notorch>=6.2.1.1",  # VAD model+API, onnxruntime-only, no torch — live-only
     "sounddevice>=0.4",        # mic capture — lazy in MicCapture.start(), live-only
+    "fastapi>=0.110",          # UI web server + WebSocket
+    "uvicorn[standard]>=0.29",  # ASGI server for `python -m longhand`
 ]
 
 [project.optional-dependencies]
