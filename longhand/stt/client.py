@@ -273,7 +273,9 @@ def raise_for_status(status_code: int, body: str = "") -> None:
 def _audio_part_meta(audio_format: str) -> tuple[str, str]:
     if audio_format == "wav":
         return "audio.wav", "audio/wav"
-    return "audio.pcm", "application/octet-stream"
+    # Raw 16-bit PCM MUST be `audio/pcm`. The API 415s `application/octet-stream`
+    # ("cannot be decoded") — verified live.
+    return "audio.pcm", "audio/pcm"
 
 
 # --- Interface --------------------------------------------------------------

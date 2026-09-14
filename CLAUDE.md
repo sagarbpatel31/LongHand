@@ -31,6 +31,9 @@ what exists, choose confidence.
 - `multipart/form-data`, parts **in this order**: `config` (JSON), then `audio`.
   Wrong order or missing config → `400`.
 - **WAV or raw 16-bit PCM only.** Anything else → `415`.
+- **Audio part content-type is load-bearing.** WAV → `audio/wav`; raw PCM →
+  `audio/pcm`. `application/octet-stream` → `415` ("cannot be decoded"). Verified
+  live Sep 14.
 - **120 second maximum per call.** We use 110s as the ceiling.
 - Raw PCM requires `sample_rate` and `channels` in config.
 - Send only ONE of `stt_prompt` / `prompt`. Send only ONE of
@@ -107,9 +110,16 @@ python -m longhand        # run the app
 ## Current status
 
 Hours 0–14 done (STT + scheduler + assembler + segmenter + benchmark + assembly
-intelligence + forced-cut splice + UI + docs) + live mic→UI path. **140 offline
-tests pass, 0 network**; 1 live smoke deselected. Only the demo *recording* and
-real mic/live-API validation remain (manual).
+intelligence + forced-cut splice + UI + docs) + live mic→UI path. **141 offline
+tests pass, 0 network**; 1 live smoke deselected. Live-validated against the real
+API. Only the demo *recording* remains (manual).
+
+Live bugfix (Sep 14): the live mic path gapped every segment with
+`[audio unavailable — UnsupportedMediaError]`. Root cause (confirmed live): the
+raw-PCM audio part was sent as `application/octet-stream`, which the API 415s
+("cannot be decoded"); it requires `audio/pcm`. One-line fix in
+`_audio_part_meta`; PCM now returns 200. The WAV smoke passed earlier only
+because WAV used the correct `audio/wav` type all along.
 
 Hour 0–1 — STT layer:
 - Skeleton: `pyproject.toml` (hatchling), `longhand/` package, `.env` via

@@ -20,6 +20,7 @@ from longhand.stt.client import (
     TranscriptionResult,
     UnsupportedMediaError,
     Word,
+    _audio_part_meta,
     audio_duration_seconds,
     build_multipart,
     raise_for_status,
@@ -69,6 +70,14 @@ def test_multipart_config_precedes_audio():
     assert ct == "multipart/form-data; boundary=BOUND"
     # two part headers + one closing delimiter
     assert body.count(b"--BOUND") == 3
+
+
+def test_audio_part_content_types_match_the_live_api():
+    # Live-verified: the API rejects the audio part unless the content-type names
+    # the codec. `application/octet-stream` returns 415 ("cannot be decoded");
+    # raw 16-bit PCM must be sent as `audio/pcm`.
+    assert _audio_part_meta("wav") == ("audio.wav", "audio/wav")
+    assert _audio_part_meta("pcm") == ("audio.pcm", "audio/pcm")
 
 
 # --- duration helpers -------------------------------------------------------
