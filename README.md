@@ -11,6 +11,19 @@ It does this by segmenting on **natural silence**, transcribing segments in
 parallel, and assembling the pieces with the timing data most pipelines throw
 away.
 
+### Quickstart
+
+```bash
+pip install -e .
+python -m longhand        # live-document UI → http://127.0.0.1:8000  (no key or mic needed)
+python -m longhand.bench  # the A vs B vs C benchmark, printed as charts
+pytest                    # 141 offline tests, 0 network
+```
+
+The UI opens in **replay** mode — a synthetic session through the real pipeline —
+so you can see everything work with zero setup. Add a key and click **🎤 live**
+to dictate for real.
+
 ---
 
 ## The two ideas it rests on
@@ -219,7 +232,24 @@ a network.
 - The splicer and keyterm packer carry property tests — their invariants are easy
   to state and easy to break.
 
-**140 offline tests, 0 network.** See `LONGHAND_SPEC.md` for the full design.
+**141 offline tests, 0 network.** See `LONGHAND_SPEC.md` for the full design.
+
+---
+
+## For reviewers — where to look
+
+The ideas live in small, focused modules:
+
+- `longhand/segment/policy.py` — **cut at silence**, forced cut at 108 s (idea #1).
+- `longhand/assemble/structure.py` — **pauses → paragraphs and sections** (idea #2).
+- `longhand/assemble/glossary.py` — terminology carryover + the consistency pass.
+- `longhand/assemble/splice.py` — forced-cut overlap alignment + de-dup (property-tested).
+- `longhand/stt/scheduler.py` — parallel in-flight, retries, backpressure, carryover hooks.
+- `longhand/stt/client.py` — every hard API fact as a guard/mapping.
+- `longhand/ui/live.py` + `session.py` — the live and replay drivers behind one page.
+- `longhand/bench/` — synthetic fixtures + the A/B/C comparison (`python -m longhand.bench`).
+
+`DEMO.md` is the demo/recording run-sheet; `LONGHAND_SPEC.md` is the full design.
 
 ---
 

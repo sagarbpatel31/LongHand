@@ -16,8 +16,7 @@ Everything you need to run the demo and record it. Two modes:
    Microphone** → enable your terminal (Terminal / iTerm) **or** your browser.
 2. Start the server from the project root:
    ```bash
-   cd /Users/sagarpatel/Desktop/LongHand
-   .venv/bin/python -m longhand
+   python -m longhand
    ```
    It prints `Longhand UI → http://127.0.0.1:8000`. Leave it running.
 3. Open **http://127.0.0.1:8000** in Chrome / Safari / Firefox.
