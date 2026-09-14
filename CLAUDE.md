@@ -106,8 +106,9 @@ python -m longhand        # run the app
 
 ## Current status
 
-Hours 0–9 done (STT + scheduler + assembler + segmenter + benchmark + assembly
-intelligence). **117 offline tests pass, 0 network**; 1 live smoke deselected.
+Hours 0–10 done (STT + scheduler + assembler + segmenter + benchmark + assembly
+intelligence + forced-cut splice). **122 offline tests pass, 0 network**; 1 live
+smoke deselected.
 
 Hour 0–1 — STT layer:
 - Skeleton: `pyproject.toml` (hatchling), `longhand/` package, `.env` via
@@ -176,12 +177,20 @@ Hours 7–9 — assembly intelligence (done):
 - terminology consistency: A/B 69% → C 100%
 - paragraph-boundary F1: A 0.00 → B/C 1.00
 
+Hour 9–10 — forced-cut splice (done):
+- `assemble/splice.py`: `splice_words`/`splice_texts` align the tail of a forced
+  segment against the head of the next (overlap match), keep the overlap once
+  (higher-confidence word on disagreement), drop the duplication; fall back to
+  naive concat + visible `SEAM_MARKER` when no alignment clears threshold.
+- Property test: any split point + overlap reconstructs the original (§9.3).
+  Integration: real 130s forced cut → overlapping transcripts → splice → exact.
+
 Deferred / not yet run:
 - The real spike call — `test_live_smoke.py` ready; run `pytest -m live` manually.
 - Live mic + real Silero validation (speak → segments emit → transcript). Manual.
-- Next up (§10): 9–10 forced-cut overlap splice (`assemble/splice.py`) + property
-  tests; then 10–12 UI (live doc, seam inspector, verbatim toggle); 12–14 README +
-  charts + demo.
+- Next up (§10): 10–12 UI (FastAPI + one HTML page over WebSocket: live doc,
+  in-flight shimmer, seam inspector, verbatim toggle, pause→structure). Spec warns
+  "the chart wins, not the CSS." Then 12–14 README + charts + demo recording.
 
 Deps: runtime `httpx`, `python-dotenv`, `numpy`, `onnxruntime`,
 `silero-vad-notorch`, `sounddevice` (last three lazy/live-only). Dev `pytest`,
