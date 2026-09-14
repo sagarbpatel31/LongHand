@@ -107,8 +107,9 @@ python -m longhand        # run the app
 ## Current status
 
 Hours 0–14 done (STT + scheduler + assembler + segmenter + benchmark + assembly
-intelligence + forced-cut splice + UI + docs). **135 offline tests pass, 0
-network**; 1 live smoke deselected. Only the demo *recording* remains (manual).
+intelligence + forced-cut splice + UI + docs) + live mic→UI path. **140 offline
+tests pass, 0 network**; 1 live smoke deselected. Only the demo *recording* and
+real mic/live-API validation remain (manual).
 
 Hour 0–1 — STT layer:
 - Skeleton: `pyproject.toml` (hatchling), `longhand/` package, `.env` via
@@ -212,6 +213,27 @@ Hours 12–14 — docs (done):
   table, run commands, how-it-works, hard API facts, testing philosophy.
 - `.env.example`: the key var placeholder (gitignore already expected it).
 - `pyproject.toml`: `readme=` + `[project.scripts] longhand=…:main` console entry.
+
+Live mic→UI path (done, engine offline-tested):
+- `ui/messages.py`: shared `pending_message`/`document_message`/`clean_blocks`/
+  `seam_for` — ReplaySession + LiveSession emit identical shapes so ONE page
+  renders either. `document_message(..., drift=None)` → WER/term-consistency null
+  (live has no ground truth); everything else identical. ReplaySession refactored
+  onto it (behaviour unchanged, 13 tests still green).
+- `ui/live.py`: `LiveSession` runs the *real concurrent* pipeline as audio
+  arrives. Single junction `on_segment` (mic thread OR `feed_frame`); one
+  `asyncio.Queue` (pending + result markers), `stream()` the sole assembler
+  reader → no data race. Carryover via scheduler `prepare_config`/`on_result`.
+  `feed_frame`/`finish_input` = offline driver (owns frame clock); `close_input`
+  = mic path (MicCapture flushes on the audio thread).
+- `ui/app.py`: `/ws/live` builds SileroVad + AssemblyAIDictationClient + MicCapture,
+  gated on key/deps/mic — each failure degrades to one `error` message + close.
+  Page gains replay/live/stop buttons + error rendering; replay stays the default
+  zero-dependency demo. **`/ws/live` is live-only, not run by the suite.**
+- Tests: `tests/test_ui_live.py` (4 — ordered scrambled completion, gap on
+  permanent failure, pending-before-document, carryover pins later segments) via
+  FakeVad + FakeDictationClient over synthetic frames; `tests/test_ui_app.py`
+  gains a no-key `/ws/live` gate test (stays offline).
 
 Deferred / not yet run:
 - The real spike call — `test_live_smoke.py` ready; run `pytest -m live` manually.

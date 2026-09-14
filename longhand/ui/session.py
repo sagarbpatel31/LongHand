@@ -25,24 +25,18 @@ from typing import AsyncIterator, Awaitable, Callable
 
 import numpy as np
 
-from ..assemble.glossary import Glossary, consistency_pass
-from ..assemble.order import AssembledSegment, OrderedAssembler
-from ..assemble.splice import splice_words
-from ..assemble.structure import (
-    PARAGRAPH_PAUSE_S,
-    SECTION_PAUSE_S,
-    Block,
-    build_document,
-)
+from ..assemble.glossary import Glossary
+from ..assemble.order import OrderedAssembler
+from ..assemble.structure import PARAGRAPH_PAUSE_S, SECTION_PAUSE_S
 from ..bench.fixture_client import DriftDictationClient
 from ..bench.fixtures import DriftFixture
-from ..bench.metrics import terminology_consistency_rate
-from ..bench.wer import wer
+from ..capture.ring import RingBuffer
 from ..segment.policy import MAX_SEGMENT_S, CutPolicy
 from ..segment.types import SegmentClosed
 from ..segment.vad import FRAME_DURATION_S
-from ..capture.ring import RingBuffer
 from ..stt.client import TranscriptionConfig
+from .messages import clean_blocks as _clean_blocks  # re-export for tests
+from .messages import document_message, pending_message
 
 
 async def _anoop(_delay: float) -> None:  # default pace: instant (tests)
@@ -115,7 +109,7 @@ class ReplaySession:
         total = len(self._segs)
 
         for done, seg in enumerate(self._segs):
-            yield self._pending_msg(seg, done, total)
+            yield pending_message(seg, done, total)
             await self._sleep(self._latency_s)
 
             cfg = replace(
@@ -129,9 +123,11 @@ class ReplaySession:
             asm.ready()
 
             is_last = done + 1 == total
-            yield self._document_msg(asm.document(), done + 1, total, final=is_last)
+            yield document_message(
+                asm.document(), done + 1, total, final=is_last, drift=self._drift
+            )
 
-    # --- message builders ---------------------------------------------------
+    # --- init message (replay-specific: drift terms + ground-truth pauses) --
 
     def _init_msg(self) -> dict:
         return {
@@ -150,126 +146,3 @@ class ReplaySession:
                 round(t, 3) for t in self._drift.paragraph_boundary_times
             ],
         }
-
-    def _pending_msg(self, seg: SegmentClosed, done: int, total: int) -> dict:
-        return {
-            "type": "pending",
-            "seq": seg.seq,
-            "t_start": round(seg.t_start, 3),
-            "t_end": round(seg.t_end, 3),
-            "duration_s": round(seg.t_end - seg.t_start, 3),
-            "lead_pause": round(seg.lead_pause, 3),
-            "forced": seg.forced,
-            "done": done,
-            "total": total,
-        }
-
-    def _document_msg(
-        self,
-        assembled: list[AssembledSegment],
-        done: int,
-        total: int,
-        *,
-        final: bool,
-    ) -> dict:
-        verbatims = [a.best_text for a in assembled]
-        cleans = _clean_blocks(verbatims)
-        by_seq = {a.seq: a for a in assembled}
-        clean_by_seq = {a.seq: c for a, c in zip(assembled, cleans)}
-        prev_by_seq = {
-            assembled[i].seq: (assembled[i - 1] if i > 0 else None)
-            for i in range(len(assembled))
-        }
-
-        doc = build_document(assembled)
-        sections_out = []
-        for section in doc.sections:
-            paras_out = []
-            for para in section.paragraphs:
-                blocks_out = [
-                    self._block_msg(
-                        b, by_seq[b.seq], prev_by_seq[b.seq], clean_by_seq[b.seq]
-                    )
-                    for b in para.blocks
-                ]
-                paras_out.append({"blocks": blocks_out})
-            sections_out.append({"paragraphs": paras_out})
-
-        clean_full = " ".join(c for c in cleans if c).strip()
-        tc = terminology_consistency_rate(clean_full, self._drift) if final else None
-        stats = {
-            "segments_done": done,
-            "segments_total": total,
-            "sections": len(doc.sections),
-            "paragraphs": sum(len(s.paragraphs) for s in doc.sections),
-            "forced_cuts": sum(1 for a in assembled if a.forced),
-            "gaps": sum(1 for a in assembled if a.is_gap),
-            "terminology_consistency": None if tc is None else round(tc, 4),
-            "wer": round(wer(self._drift.ground_truth, clean_full), 4) if final else None,
-        }
-        return {
-            "type": "document",
-            "seq": assembled[-1].seq if assembled else None,
-            "sections": sections_out,
-            "stats": stats,
-            "final": final,
-        }
-
-    def _block_msg(
-        self,
-        block: Block,
-        seg: AssembledSegment,
-        prev: AssembledSegment | None,
-        clean: str,
-    ) -> dict:
-        return {
-            "seq": block.seq,
-            "verbatim": block.text,
-            "clean": clean,
-            "is_gap": block.is_gap,
-            "forced": block.forced,
-            "error": block.error,
-            "lead_pause": round(block.lead_pause, 3),
-            "seam": _seam_for(prev, seg),
-        }
-
-
-def _clean_blocks(verbatims: list[str]) -> list[str]:
-    """Consistency-normalise the whole document, then re-split per block.
-
-    `consistency_pass` rewrites tokens in place and never adds/removes them, so
-    the cleaned token stream re-splits by each block's original word count. Gaps
-    contribute zero tokens (empty verbatim) and stay empty.
-    """
-    joined = " ".join(v for v in verbatims)
-    cleaned = consistency_pass(joined) if joined.strip() else joined
-    ctoks = cleaned.split()
-    out: list[str] = []
-    i = 0
-    for v in verbatims:
-        n = len(v.split())
-        out.append(" ".join(ctoks[i : i + n]))
-        i += n
-    return out
-
-
-def _seam_for(prev: AssembledSegment | None, cur: AssembledSegment) -> dict | None:
-    """Splice info for `cur` iff the segment before it was a forced cut.
-
-    The forced segment's tail overlaps `cur`'s head (§6). We align + dedupe, and
-    expose both the naive (duplicated) concat and the spliced result so the seam
-    inspector can show exactly what was removed.
-    """
-    if prev is None or not prev.forced:
-        return None
-    if prev.result is None or cur.result is None:  # a gap on either side
-        return None
-    sr = splice_words(prev.result.words, cur.result.words)
-    raw_concat = (prev.best_text + " " + cur.best_text).strip()
-    return {
-        "aligned": sr.aligned,
-        "overlap_len": sr.overlap_len,
-        "raw_concat": raw_concat,
-        "spliced": sr.text,
-        "marker": not sr.aligned,
-    }

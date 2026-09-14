@@ -42,6 +42,17 @@ def test_websocket_streams_full_protocol():
         assert final["stats"]["wer"] is not None
 
 
+def test_ws_live_without_key_reports_error_and_stays_offline(monkeypatch):
+    # No key -> the live endpoint must degrade to an error message and close,
+    # never reaching SileroVad / the mic / the network. Offline-safe.
+    monkeypatch.delenv("ASSEMBLYAI_API_KEY", raising=False)
+    client = TestClient(create_app())
+    with client.websocket_connect("/ws/live") as ws:
+        m = ws.receive_json()
+        assert m["type"] == "error"
+        assert "key" in m["message"].lower()
+
+
 def test_demo_session_has_exactly_one_forced_cut_for_the_seam_inspector():
     # The seam inspector needs something to inspect: the run-on monologue must
     # trip a forced cut while the structured clips still cut on silence.

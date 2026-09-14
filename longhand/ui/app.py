@@ -12,6 +12,7 @@ No network, no mic — the demo fixture is synthetic and deterministic. Spec §1
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -22,7 +23,11 @@ from ..bench.fixtures import (
     _demo_clips,
     build_drift_fixture,
 )
+from ..settings import get_api_key
+from .live import LiveSession
 from .session import ReplaySession
+
+logger = logging.getLogger(__name__)
 
 # A lower ceiling than the real 108s so a ~46s run-on clip trips ONE forced cut
 # (for the seam inspector) while the ~13s structured clips still cut on silence.
@@ -73,6 +78,77 @@ def create_app() -> FastAPI:
         except WebSocketDisconnect:
             return
 
+    @app.websocket("/ws/live")
+    async def ws_live(websocket: WebSocket) -> None:
+        """Real mic → real pipeline → real API. Live-only; gated on key + deps.
+
+        Not exercised by the offline suite (no mic, no network). Every failure
+        path degrades to a single `error` message the page shows, then closes.
+        """
+        await websocket.accept()
+
+        key = get_api_key()
+        if not key:
+            await websocket.send_json({
+                "type": "error",
+                "message": "No ASSEMBLYAI_API_KEY set — live mic needs a real key. "
+                           "Use replay mode, or set the key in .env.",
+            })
+            await websocket.close()
+            return
+
+        # Build the real pipeline. A missing model / onnxruntime surfaces here.
+        try:
+            from ..segment.vad import SileroVad
+            from ..stt.client import AssemblyAIDictationClient
+
+            vad = SileroVad()
+            client = AssemblyAIDictationClient(api_key=key)
+        except Exception as e:  # noqa: BLE001 — report any setup failure to the page
+            logger.warning("live pipeline setup failed: %s", e)
+            await websocket.send_json({"type": "error", "message": f"live pipeline unavailable: {e}"})
+            await websocket.close()
+            return
+
+        session = LiveSession(vad, client, close_client=True)
+
+        # Start the mic (PortAudio). Failure → error + cleanup.
+        try:
+            from ..capture.mic import MicCapture
+
+            mic = MicCapture(
+                session.ring, session.vad, session.policy, session.on_segment,
+                loop=asyncio.get_running_loop(),
+            )
+            mic.start()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("microphone unavailable: %s", e)
+            await websocket.send_json({"type": "error", "message": f"microphone unavailable: {e}"})
+            await client.aclose()
+            await websocket.close()
+            return
+
+        async def watch_stop() -> None:
+            # The browser sends a "stop" frame (or disconnects) to end dictation.
+            try:
+                await websocket.receive_text()
+            except Exception:  # noqa: BLE001 — disconnect is a normal stop
+                pass
+            mic.stop()  # flush the tail on the audio thread's policy
+            await asyncio.sleep(0.1)  # let the bridged tail segment dispatch land
+            await session.close_input()
+
+        stop_task = asyncio.create_task(watch_stop())
+        try:
+            async for msg in session.stream():
+                await websocket.send_json(msg)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            mic.stop()
+            await session.close_input()
+            stop_task.cancel()
+
     return app
 
 
@@ -96,7 +172,12 @@ _PAGE = """<!doctype html>
   .stat { text-align:right; }
   .stat b { display:block; font-size:16px; }
   .stat small { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+  .mode { background:var(--panel); color:var(--ink); border:1px solid #2c313c;
+          border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; }
+  .mode:hover { border-color:var(--accent); }
+  .mode.active { border-color:var(--accent); color:var(--accent); }
   .toggle { display:flex; align-items:center; gap:8px; color:var(--dim); font-size:13px; }
+  .err { color:var(--gap); }
   main { max-width:820px; margin:0 auto; padding:28px 24px 80px; }
   .section { padding:6px 0; }
   .section + .section { border-top:1px dashed #2c313c; margin-top:22px; padding-top:22px; }
@@ -121,6 +202,9 @@ _PAGE = """<!doctype html>
 <body>
 <header>
   <h1>Long<span>hand</span> · live document</h1>
+  <button class="mode" id="replayBtn">↻ replay demo</button>
+  <button class="mode" id="liveBtn">🎤 live (mic)</button>
+  <button class="mode" id="stopBtn" hidden>■ stop</button>
   <label class="toggle"><input type="checkbox" id="verbatim"/> show verbatim (raw ASR)</label>
   <div class="stats" id="stats"></div>
 </header>
@@ -190,14 +274,37 @@ function render() {
   }
 }
 
-const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
-const sock = new WebSocket(url);
-sock.onmessage = (ev) => {
-  const m = JSON.parse(ev.data);
-  if (m.type === 'init') {
-    const terms = m.drift_terms.map(t => `<code>${t.drift}</code>→${t.canonical}`).join(', ');
-    pendEl.innerHTML = `session: ${m.total_s.toFixed(0)}s, ${m.n_segments} segments · `
-      + `drift terms carried across segments: ${terms}`;
+const replayBtn = document.getElementById('replayBtn');
+const liveBtn = document.getElementById('liveBtn');
+const stopBtn = document.getElementById('stopBtn');
+let sock = null, mode = 'replay';
+
+const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+
+function connect(path) {
+  if (sock) { try { sock.close(); } catch (e) {} }
+  mode = path === '/ws/live' ? 'live' : 'replay';
+  replayBtn.classList.toggle('active', mode === 'replay');
+  liveBtn.classList.toggle('active', mode === 'live');
+  stopBtn.hidden = mode !== 'live';
+  lastDoc = null; docEl.innerHTML = ''; statsEl.innerHTML = '';
+  pendEl.textContent = mode === 'live' ? 'starting microphone…' : 'connecting…';
+
+  sock = new WebSocket(wsBase + path);
+  sock.onmessage = (ev) => handle(JSON.parse(ev.data));
+  sock.onclose = () => { if (lastDoc && !lastDoc.final) pendEl.textContent = 'connection closed.'; };
+}
+function handle(m) {
+  if (m.type === 'error') {
+    pendEl.innerHTML = '<span class="err">⚠ ' + m.message + '</span>';
+  } else if (m.type === 'init') {
+    if (m.mode === 'live') {
+      pendEl.innerHTML = 'listening… speak, then pause. Click <b>stop</b> when done.';
+    } else {
+      const terms = m.drift_terms.map(t => `<code>${t.drift}</code>→${t.canonical}`).join(', ');
+      pendEl.innerHTML = `session: ${m.total_s.toFixed(0)}s, ${m.n_segments} segments · `
+        + `drift terms carried across segments: ${terms}`;
+    }
   } else if (m.type === 'pending') {
     pendEl.innerHTML = `transcribing segment ${m.seq} `
       + `(${m.duration_s.toFixed(1)}s${m.forced ? ', <b style="color:var(--seam)">forced cut</b>' : ''}) `
@@ -206,8 +313,12 @@ sock.onmessage = (ev) => {
     lastDoc = m; renderStats(m.stats); render();
     if (m.final) pendEl.textContent = '✓ document complete — every pause became structure, every term stayed consistent.';
   }
-};
-sock.onclose = () => { if (lastDoc && !lastDoc.final) pendEl.textContent = 'connection closed.'; };
+}
+replayBtn.onclick = () => connect('/ws');
+liveBtn.onclick = () => connect('/ws/live');
+stopBtn.onclick = () => { if (sock && sock.readyState === 1) sock.send('stop'); };
+
+connect('/ws');  // replay is the default, zero-dependency demo
 </script>
 </body>
 </html>
